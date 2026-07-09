@@ -62,22 +62,11 @@ async function fetchMosquePage(slug) {
   return res.text();
 }
 
-// Mawaqit embeds:  var confData = { ... };
-// We locate the marker, then walk forward counting braces (while respecting
-// quoted strings) until the object that opened is balanced. This is more
-// robust than matching a fixed trailing string, since it doesn't care what
-// comes after `calendar` in the object.
-function extractConfData(html) {
-  const marker = "var confData = ";
-  const startIdx = html.indexOf(marker);
-  if (startIdx === -1) {
-    throw new Error(
-      "Could not find 'confData' in the Mawaqit page. The site markup may " +
-        "have changed, or the mosque slug is wrong."
-    );
-  }
-
-  const jsonStart = startIdx + marker.length;
+// Walk forward from `jsonStart` counting braces (while respecting quoted
+// strings) until the object that opened there is balanced, and return the
+// parsed JSON (or null if it doesn't parse). Used by extractConfData below
+// for each candidate marker it tries.
+function extractBalancedJson(html, jsonStart) {
   let depth = 0;
   let inString = false;
   let stringChar = "";
@@ -113,12 +102,95 @@ function extractConfData(html) {
     }
   }
 
-  if (endIdx === -1) {
-    throw new Error("Could not find the end of the confData object.");
+  if (endIdx === -1) return null;
+
+  try {
+    return JSON.parse(html.slice(jsonStart, endIdx));
+  } catch {
+    return null;
+  }
+}
+
+// Recursively search a parsed object for a `calendar` array shaped like
+// Mawaqit's (an array of month objects, each mapping day-of-month strings
+// to arrays of prayer time strings). Handles both a bare confData object
+// and cases where confData is nested inside a larger state blob (e.g. an
+// Angular TransferState dump).
+function findCalendarArray(node, depth = 0) {
+  if (!node || typeof node !== "object" || depth > 6) return null;
+
+  if (Array.isArray(node.calendar) && node.calendar.length > 0) {
+    const firstMonth = node.calendar[0];
+    if (firstMonth && typeof firstMonth === "object") {
+      const firstDay = Object.values(firstMonth)[0];
+      if (Array.isArray(firstDay)) return node.calendar;
+    }
   }
 
-  const jsonText = html.slice(jsonStart, endIdx);
-  return JSON.parse(jsonText);
+  for (const value of Object.values(node)) {
+    if (value && typeof value === "object") {
+      const found = findCalendarArray(value, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// Mawaqit has historically embedded a `var confData = { ... };` blob with
+// the full year calendar directly in the page HTML. Newer builds may
+// instead render prayer times client-side and/or use a different
+// variable/script name. This function tries several known shapes in turn,
+// and only throws (with diagnostics) if none of them work.
+function extractConfData(html) {
+  const candidateMarkers = [
+    "var confData = ",
+    "var confData=",
+    "window.confData = ",
+    "window.confData=",
+  ];
+
+  for (const marker of candidateMarkers) {
+    const startIdx = html.indexOf(marker);
+    if (startIdx === -1) continue;
+    const parsed = extractBalancedJson(html, startIdx + marker.length);
+    if (parsed && findCalendarArray(parsed)) return parsed;
+  }
+
+  // Try any <script type="application/json" ...>{...}</script> blocks
+  // (e.g. Angular TransferState), in case confData is nested inside one.
+  const scriptJsonRegex =
+    /<script[^>]+type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+  while ((match = scriptJsonRegex.exec(html)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (findCalendarArray(parsed)) return parsed;
+    } catch {
+      // not valid JSON on its own, ignore
+    }
+  }
+
+  // Nothing worked: gather diagnostics to make the next fix fast instead of
+  // another guess.
+  const hasConfDataWord = /confdata/i.test(html);
+  const hasCalendarWord = /calendar/i.test(html);
+  const fajrIdx = html.search(/fajr|Fadjr|fadjr/i);
+  const snippetAroundFajr =
+    fajrIdx !== -1 ? html.slice(Math.max(0, fajrIdx - 80), fajrIdx + 80) : null;
+
+  console.error("---- extractConfData diagnostics ----");
+  console.error("HTML length:", html.length);
+  console.error("Contains the word 'confData' (any case)?", hasConfDataWord);
+  console.error("Contains the word 'calendar' (any case)?", hasCalendarWord);
+  console.error("Snippet around first 'fajr'-like text:", snippetAroundFajr);
+  console.error("First 600 chars of HTML:", html.slice(0, 600));
+  console.error("--------------------------------------");
+
+  throw new Error(
+    "Could not find prayer-time calendar data in the Mawaqit page using any " +
+      "known pattern. See the diagnostics printed above in the Action log " +
+      "and share them so the extraction logic can be updated."
+  );
 }
 
 function pad(n) {
@@ -170,7 +242,6 @@ function buildIcs(events, calName) {
   lines.push("METHOD:PUBLISH");
   lines.push(`X-WR-CALNAME:${icsEscape(calName)}`);
   lines.push(`X-WR-TIMEZONE:${TIMEZONE}`);
-  // Hints some clients use to know how often to re-poll the feed.
   lines.push("REFRESH-INTERVAL;VALUE=DURATION:P1D");
   lines.push("X-PUBLISHED-TTL:P1D");
 
