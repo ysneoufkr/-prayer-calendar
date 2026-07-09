@@ -1,0 +1,18 @@
+{
+  "name": "prayer-calendar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Generates an Apple Calendar-compatible .ics subscription feed of Mawaqit prayer times for Islamitisch Centrum Barendrecht (IC Barendrecht).",
+  "main": "generate.js",
+  "scripts": {
+    "generate": "node generate.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "luxon": "^3.4.4"
+  },
+  "license": "MIT"
+}
