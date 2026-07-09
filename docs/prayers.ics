@@ -1,0 +1,17 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//ysneoufkr//prayer-calendar//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:IC Barendrecht — Prayer Times
+X-WR-TIMEZONE:Europe/Amsterdam
+BEGIN:VEVENT
+UID:placeholder-initial-setup@ysneoufkr.github.io
+DTSTAMP:20260101T000000Z
+DTSTART:20260101T090000Z
+DTEND:20260101T091500Z
+SUMMARY:Prayer calendar not generated yet
+DESCRIPTION:This is a placeholder. Run the "Update prayer calendar" GitHub Action (or wait for the daily schedule) to generate the real prayer times.
+TRANSP:TRANSPARENT
+END:VEVENT
+END:VCALENDAR
